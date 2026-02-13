@@ -16,6 +16,7 @@ class Sidebar(ft.NavigationRail):
         ("calendar", ft.Icons.CALENDAR_TODAY_OUTLINED, ft.Icons.CALENDAR_TODAY, "Календарь"),
         ("knowledge", ft.Icons.SCHOOL_OUTLINED, ft.Icons.SCHOOL, "База знаний"),
         ("settings", ft.Icons.SETTINGS_OUTLINED, ft.Icons.SETTINGS, "Настройки"),
+        ("profile", ft.Icons.PERSON_OUTLINE, ft.Icons.PERSON, "Личный кабинет"),
         ("about", ft.Icons.INFO_OUTLINE, ft.Icons.INFO, "О проекте"),
     ]
 

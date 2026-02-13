@@ -4,6 +4,7 @@ Sphere — Главное приложение.
 Координирует все модули, управляет навигацией и состоянием.
 """
 
+import asyncio
 import webbrowser
 from pathlib import Path
 from urllib.parse import urlparse, unquote
@@ -33,9 +34,10 @@ from modules.tasks import TasksModule
 from modules.calendar import CalendarModule
 from modules.knowledge import KnowledgeModule
 from modules.notifications import NotificationsModule
-from utils.file_utils import create_backup, export_data_to_json, export_notes_to_files
+from utils.file_utils import create_backup, export_data_to_json, export_notes_to_files, restore_from_export
 from utils.importers import import_markdown_files
 from utils.updater import check_for_updates, apply_update, is_git_repo
+from utils.telegram_backup import send_backup_to_telegram, get_backup_from_telegram
 
 
 class SphereApp:
@@ -187,9 +189,11 @@ class SphereApp:
 
     def _get_module_view(self, module_name: str) -> ft.Control:
         """Получить или построить вид модуля."""
-        # О проекте — всегда пересобираем, чтобы Dev Log был актуальным
+        # О проекте и личный кабинет — всегда пересобираем (актуальные данные, Drive)
         if module_name == "about":
             return AboutLayout(version=APP_VERSION)
+        if module_name == "profile":
+            return self._build_profile_view()
         if module_name not in self._module_views:
             builder = {
                 "dashboard": lambda: DashboardLayout(
@@ -202,6 +206,7 @@ class SphereApp:
                 "calendar": lambda: self.calendar_module.build(),
                 "knowledge": lambda: self.knowledge_module.build(),
                 "settings": lambda: self._build_settings_view(),
+                "profile": lambda: self._build_profile_view(),
                 "about": lambda: AboutLayout(version=APP_VERSION),
             }
             build_fn = builder.get(module_name)
@@ -401,6 +406,152 @@ class SphereApp:
                     duration=3000,
                 )
             )
+
+    def _build_profile_view(self) -> ft.Column:
+        """Личный кабинет: выгрузка и восстановление бекапа через Telegram."""
+        tg = self.config.telegram
+        has_bot = bool(tg.bot_token and tg.chat_id)
+        last_sent = tg.last_backup_sent_at or "—"
+
+        header = ft.Container(
+            content=ft.Row(
+                [
+                    ft.Icon(ft.Icons.PERSON, color=ft.Colors.ON_SURFACE, size=20),
+                    ft.Text("Личный кабинет", size=16, weight=ft.FontWeight.W_600),
+                ],
+                spacing=8,
+            ),
+            padding=ft.padding.symmetric(horizontal=16, vertical=8),
+        )
+
+        block = ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.Icon(ft.Icons.TELEGRAM, color=ft.Colors.ON_SURFACE_VARIANT, size=20),
+                        ft.Text("Бекап в Telegram", size=14, weight=ft.FontWeight.W_600),
+                    ],
+                    spacing=8,
+                ),
+                ft.Text(
+                    "Вся информация (заметки, задачи, календарь, документы) в одном JSON. Текст весит мало — удобно хранить в боте.",
+                    size=13,
+                    color=ft.Colors.ON_SURFACE_VARIANT,
+                ),
+            ],
+            spacing=8,
+        )
+
+        if not has_bot:
+            block.controls.append(
+                ft.Text(
+                    "Настройте бота в разделе «Настройки»: Bot Token и Chat ID.",
+                    size=13,
+                    color=ft.Colors.ERROR,
+                )
+            )
+        else:
+            block.controls.extend([
+                ft.FilledButton(
+                    content=ft.Text("Выгрузить всё в Telegram"),
+                    icon=ft.Icons.CLOUD_UPLOAD,
+                    on_click=self._telegram_export_click,
+                ),
+                ft.Text(f"Последняя выгрузка: {last_sent}", size=12, color=ft.Colors.ON_SURFACE_VARIANT),
+                ft.OutlinedButton(
+                    content=ft.Text("Достать бекап из Telegram"),
+                    icon=ft.Icons.CLOUD_DOWNLOAD,
+                    on_click=self._telegram_restore_click,
+                ),
+                ft.Text(
+                    "Восстанавливает данные из последней выгруженной копии (заметки, задачи, события добавляются к текущим).",
+                    size=12,
+                    color=ft.Colors.ON_SURFACE_VARIANT,
+                ),
+            ])
+
+        return ft.Column(
+            [
+                header,
+                ft.Divider(height=1, thickness=0.5),
+                ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Container(
+                                content=block,
+                                padding=ft.padding.all(24),
+                                border_radius=8,
+                                bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
+                            ),
+                        ],
+                        spacing=12,
+                    ),
+                    expand=True,
+                ),
+            ],
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+            spacing=0,
+        )
+
+    def _telegram_export_click(self, e):
+        self.page.run_task(self._telegram_export_async)
+
+    async def _telegram_export_async(self):
+        if not self.config.telegram.bot_token or not self.config.telegram.chat_id:
+            self.page.show_dialog(ft.SnackBar(content=ft.Text("Настройте Telegram в Настройках.")))
+            return
+        path = export_data_to_json(self.db)
+        if not path:
+            self.page.show_dialog(ft.SnackBar(content=ft.Text("Ошибка создания бекапа.")))
+            return
+        file_id, err = await send_backup_to_telegram(
+            self.config.telegram.bot_token,
+            self.config.telegram.chat_id,
+            path,
+        )
+        if err:
+            self.page.show_dialog(ft.SnackBar(content=ft.Text(f"Ошибка: {err}"), duration=4000))
+            return
+        from datetime import datetime
+        self._update_setting("telegram.last_backup_file_id", file_id)
+        self._update_setting("telegram.last_backup_sent_at", datetime.now().strftime("%Y-%m-%d %H:%M"))
+        self.config.save()
+        self._module_views.pop("profile", None)
+        self._navigate_to("profile")
+        self.page.show_dialog(ft.SnackBar(content=ft.Text("Бекап отправлен в Telegram."), duration=2000))
+
+    def _telegram_restore_click(self, e):
+        self.page.run_task(self._telegram_restore_async)
+
+    async def _telegram_restore_async(self):
+        if not self.config.telegram.bot_token or not self.config.telegram.chat_id:
+            self.page.show_dialog(ft.SnackBar(content=ft.Text("Настройте Telegram в Настройках.")))
+            return
+        file_id = self.config.telegram.last_backup_file_id
+        if not file_id:
+            self.page.show_dialog(ft.SnackBar(content=ft.Text("Сначала выгрузите бекап в Telegram.")))
+            return
+        dest = DATA_DIR / "restore_from_telegram.json"
+        ok, err = await get_backup_from_telegram(
+            self.config.telegram.bot_token,
+            file_id,
+            str(dest),
+        )
+        if not ok:
+            self.page.show_dialog(ft.SnackBar(content=ft.Text(f"Ошибка: {err}"), duration=4000))
+            return
+        try:
+            restore_from_export(self.db, dest)
+            self.page.show_dialog(ft.SnackBar(content=ft.Text("Данные восстановлены из бекапа."), duration=3000))
+            self._module_views.pop("notes", None)
+            self._module_views.pop("tasks", None)
+            self._module_views.pop("calendar", None)
+            if self.state.current_module in ("notes", "tasks", "calendar"):
+                self._navigate_to(self.state.current_module)
+        except Exception as ex:
+            logger.exception("Restore from export")
+            self.page.show_dialog(ft.SnackBar(content=ft.Text(f"Ошибка восстановления: {ex}"), duration=4000))
 
     def _build_settings_view(self) -> ft.Column:
         """Построить страницу настроек."""

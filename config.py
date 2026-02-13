@@ -66,10 +66,13 @@ class UIConfig:
 
 @dataclass
 class TelegramConfig:
-    """Настройки Telegram бота."""
+    """Настройки Telegram бота (уведомления + выгрузка/восстановление бекапа)."""
     enabled: bool = False
     bot_token: Optional[str] = None
     chat_id: Optional[str] = None
+    # file_id последнего бекапа, отправленного в Telegram (для «достать бекап»)
+    last_backup_file_id: Optional[str] = None
+    last_backup_sent_at: Optional[str] = None
 
 
 @dataclass
@@ -112,6 +115,8 @@ class AppConfig:
                 "enabled": self.telegram.enabled,
                 "bot_token": self.telegram.bot_token,
                 "chat_id": self.telegram.chat_id,
+                "last_backup_file_id": self.telegram.last_backup_file_id,
+                "last_backup_sent_at": self.telegram.last_backup_sent_at,
             },
             "auto_backup": self.auto_backup,
             "backup_interval_hours": self.backup_interval_hours,
