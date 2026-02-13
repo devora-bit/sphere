@@ -91,7 +91,6 @@ sphere/
 | БД (структурированные данные) | SQLite |
 | БД (векторные эмбеддинги) | ChromaDB |
 | AI (локально) | Ollama |
-| AI (облако) | OpenAI API |
 | Уведомления | pync (macOS) + Telegram Bot |
 | Документы | PyPDF2, python-docx, BeautifulSoup |
 | Логирование | loguru |
