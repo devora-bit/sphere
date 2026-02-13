@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Виртуальное окружение
+venv/
+.venv/
+env/
+
+# Данные пользователя
+data/
+*.db
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Секреты
+.env
+*.key
+credentials.json
+
+# Flet
+.flet/
