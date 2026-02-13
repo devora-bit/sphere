@@ -21,6 +21,7 @@ class ChatLayout(ft.Column):
         on_session_select: Callable = None,
         ai_mode: str = "hybrid",
         on_ai_mode_change: Callable = None,
+        agent_name: str = None,
         **kwargs,
     ):
         self._page = page
@@ -28,6 +29,7 @@ class ChatLayout(ft.Column):
         self._on_new_session = on_new_session
         self._on_session_select = on_session_select
         self._on_ai_mode_change = on_ai_mode_change
+        self._agent_name = (agent_name or "").strip() or "Sphere AI"
 
         # Режим общения с ИИ
         self.mode_dropdown = ft.Dropdown(
@@ -157,6 +159,7 @@ class ChatLayout(ft.Column):
             timestamp=timestamp,
             on_copy=self._on_copy_message if role == "assistant" else None,
             on_reply=self._on_reply_to_message if role == "assistant" else None,
+            agent_name=self._agent_name if role == "assistant" else None,
         )
         self.messages_list.controls.append(msg)
 

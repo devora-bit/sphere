@@ -41,11 +41,13 @@ class ChatMessage(ft.Container):
         timestamp: str = None,
         on_copy: callable = None,
         on_reply: callable = None,
+        agent_name: str = None,
         **kwargs,
     ):
         self.role = role
         self.message_content = content
         is_user = role == "user"
+        self._agent_name = (agent_name or "Sphere AI").strip() or "Sphere AI"
 
         # Регистрируем колбэки под ключами (избегаем сериализации bound methods)
         copy_key = str(uuid.uuid4()) if on_copy else None
@@ -68,7 +70,7 @@ class ChatMessage(ft.Container):
 
         # Имя — ON_SURFACE для читаемости на светлом и тёмном фоне
         name = ft.Text(
-            "Вы" if is_user else "Sphere AI",
+            "Вы" if is_user else self._agent_name,
             size=13,
             weight=ft.FontWeight.W_600,
             color=ft.Colors.ON_SURFACE,

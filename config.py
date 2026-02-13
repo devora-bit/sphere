@@ -52,6 +52,9 @@ class AIConfig:
     # Режим общения с ИИ: только база знаний / гибрид / только модель
     search_mode: str = "hybrid"  # knowledge | hybrid | model_only
 
+    # Отображаемое имя ИИ-агента (если пусто — по умолчанию из провайдера/модели)
+    ai_agent_name: Optional[str] = None
+
 
 @dataclass
 class UIConfig:
@@ -102,6 +105,7 @@ class AppConfig:
                 "max_context_length": self.ai.max_context_length,
                 "temperature": self.ai.temperature,
                 "search_mode": self.ai.search_mode,
+                "ai_agent_name": self.ai.ai_agent_name,
             },
             "ui": {
                 "theme_mode": self.ui.theme_mode,

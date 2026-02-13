@@ -31,6 +31,7 @@ class ChatModule:
         mode = (self.config.ai.search_mode if self.config else "hybrid")
         if mode not in ("knowledge", "hybrid", "model_only"):
             mode = "hybrid"
+        agent_name = (self.config.ai.ai_agent_name or "").strip() if self.config else None
         self.layout = ChatLayout(
             page=self.page,
             on_send=self._on_send_message,
@@ -38,6 +39,7 @@ class ChatModule:
             on_session_select=self._on_session_select,
             ai_mode=mode,
             on_ai_mode_change=self._on_ai_mode_change,
+            agent_name=agent_name,
         )
         # Загрузить историю
         self._load_history()

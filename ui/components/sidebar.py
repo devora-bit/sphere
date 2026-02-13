@@ -20,8 +20,10 @@ class Sidebar(ft.NavigationRail):
         ("about", ft.Icons.INFO_OUTLINE, ft.Icons.INFO, "О проекте"),
     ]
 
-    def __init__(self, on_module_change: Callable = None, **kwargs):
+    def __init__(self, on_module_change: Callable = None, on_toggle_compact: Callable = None, extended: bool = True, **kwargs):
         self._on_module_change = on_module_change
+        self._on_toggle_compact = on_toggle_compact
+        self._extended = extended
 
         destinations = [
             ft.NavigationRailDestination(
@@ -33,35 +35,52 @@ class Sidebar(ft.NavigationRail):
             for _, icon, selected_icon, label in self.MODULE_ICONS
         ]
 
+        self._collapse_btn = ft.IconButton(
+            icon=ft.Icons.CHEVRON_LEFT if extended else ft.Icons.CHEVRON_RIGHT,
+            icon_size=20,
+            icon_color=ft.Colors.WHITE,
+            tooltip="Свернуть сайдбар" if extended else "Развернуть сайдбар",
+            on_click=self._on_collapse_click,
+        )
+
+        if extended:
+            leading_content = ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Icon(ft.Icons.BLUR_CIRCULAR, color=ft.Colors.WHITE, size=24),
+                            ft.Text("Sphere", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                        ],
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        spacing=6,
+                    ),
+                    ft.Divider(height=1, thickness=0.5, color=ft.Colors.with_opacity(0.3, ft.Colors.WHITE)),
+                    self._collapse_btn,
+                ],
+                spacing=8,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+            leading_padding = ft.padding.only(top=12, bottom=8, left=12, right=12)
+        else:
+            leading_content = ft.Column(
+                [
+                    ft.Icon(ft.Icons.BLUR_CIRCULAR, color=ft.Colors.WHITE, size=22),
+                    ft.Divider(height=8, thickness=0),
+                    self._collapse_btn,
+                ],
+                spacing=4,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+            leading_padding = ft.padding.only(top=12, bottom=8, left=8, right=8)
+
         super().__init__(
             selected_index=0,
-            label_type=ft.NavigationRailLabelType.ALL,
-            min_width=80,
-            min_extended_width=220,
-            extended=True,
+            label_type=ft.NavigationRailLabelType.ALL if extended else ft.NavigationRailLabelType.NONE,
+            min_width=72,
+            min_extended_width=220 if extended else 72,
+            extended=extended,
             group_alignment=-0.9,
-            leading=ft.Container(
-                content=ft.Column(
-                    [
-                        ft.Row(
-                            [
-                                ft.Icon(ft.Icons.BLUR_CIRCULAR, color=ft.Colors.WHITE, size=28),
-                                ft.Text(
-                                    "Sphere",
-                                    size=20,
-                                    weight=ft.FontWeight.BOLD,
-                                    color=ft.Colors.WHITE,
-                                ),
-                            ],
-                            alignment=ft.MainAxisAlignment.CENTER,
-                            spacing=8,
-                        ),
-                        ft.Divider(height=1, thickness=0.5, color=ft.Colors.with_opacity(0.3, ft.Colors.WHITE)),
-                    ],
-                    spacing=12,
-                ),
-                padding=ft.padding.only(top=12, bottom=8, left=16, right=16),
-            ),
+            leading=ft.Container(content=leading_content, padding=leading_padding),
             destinations=destinations,
             on_change=self._handle_change,
             bgcolor=ft.Colors.PRIMARY,
@@ -76,9 +95,22 @@ class Sidebar(ft.NavigationRail):
             module_key = self.MODULE_ICONS[e.control.selected_index][0]
             self._on_module_change(module_key)
 
+    def _on_collapse_click(self, e):
+        if self._on_toggle_compact:
+            self._on_toggle_compact()
+
     def select_module(self, module_key: str):
         """Выбрать модуль программно."""
         for i, (key, *_) in enumerate(self.MODULE_ICONS):
             if key == module_key:
                 self.selected_index = i
                 break
+
+    def set_compact(self, compact: bool):
+        """Переключить компактный режим (только иконки)."""
+        self._extended = not compact
+        self.extended = not compact
+        self.label_type = ft.NavigationRailLabelType.NONE if compact else ft.NavigationRailLabelType.ALL
+        self.min_extended_width = 72 if compact else 220
+        self._collapse_btn.icon = ft.Icons.CHEVRON_RIGHT if compact else ft.Icons.CHEVRON_LEFT
+        self._collapse_btn.tooltip = "Развернуть сайдбар" if compact else "Свернуть сайдбар"

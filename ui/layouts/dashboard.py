@@ -58,25 +58,25 @@ class DashboardLayout(ft.Column):
         quick_actions = ft.Container(
             content=ft.Column(
                 [
-                    ft.Text("Быстрые действия", size=16, weight=ft.FontWeight.W_600),
+                    ft.Text("Быстрые действия", size=16, weight=ft.FontWeight.W_600, color=ft.Colors.ON_SURFACE),
                     ft.Row(
                         [
-                            ft.ElevatedButton(
+                            ft.FilledButton(
                                 content=ft.Text("Новый чат"),
                                 icon=ft.Icons.CHAT_BUBBLE_OUTLINE,
                                 on_click=lambda e: self._navigate("chat"),
                             ),
-                            ft.ElevatedButton(
+                            ft.FilledButton(
                                 content=ft.Text("Новая заметка"),
                                 icon=ft.Icons.ADD_OUTLINED,
                                 on_click=lambda e: self._navigate("notes"),
                             ),
-                            ft.ElevatedButton(
+                            ft.FilledButton(
                                 content=ft.Text("Новая задача"),
                                 icon=ft.Icons.ADD_TASK,
                                 on_click=lambda e: self._navigate("tasks"),
                             ),
-                            ft.ElevatedButton(
+                            ft.FilledButton(
                                 content=ft.Text("Спросить ИИ"),
                                 icon=ft.Icons.AUTO_AWESOME,
                                 on_click=lambda e: self._navigate("chat"),

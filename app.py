@@ -140,17 +140,39 @@ class SphereApp:
         if self.config.auto_update_on_start and is_git_repo():
             self.page.run_task(self._check_updates_async, show_only_if_available=True)
 
+        # Периодическое обновление мониторинга ресурсов в хедере
+        self.page.run_task(self._resource_monitor_loop)
+
         logger.info("UI построен, приложение запущено")
+
+    async def _resource_monitor_loop(self):
+        """Раз в 2 сек обновлять CPU/RAM в хедере."""
+        from utils.resource_monitor import get_cpu_percent, get_memory_info
+        while True:
+            await asyncio.sleep(2)
+            try:
+                cpu = get_cpu_percent()
+                ram_used, ram_total = get_memory_info()
+                if self.header and hasattr(self.header, "update_resources"):
+                    self.header.update_resources(cpu, ram_used, ram_total)
+                    self.header.update()
+            except Exception:
+                pass
 
     def _build_ui(self):
         """Построить основной интерфейс."""
-        # Sidebar
-        self.sidebar = Sidebar(on_module_change=self._on_module_change)
+        # Sidebar (компактный режим из настроек)
+        self.sidebar = Sidebar(
+            on_module_change=self._on_module_change,
+            on_toggle_compact=self._on_sidebar_toggle_compact,
+            extended=self.config.ui.sidebar_extended,
+        )
 
         # Header
         self.header = Header(
             on_search=self._on_global_search,
             on_theme_toggle=self._on_theme_toggle,
+            on_sidebar_toggle=self._on_sidebar_toggle_compact,
             on_notifications=self._on_notifications_click,
             on_export_md=self._export_md,
             on_import_md=self._import_md,
@@ -158,6 +180,7 @@ class SphereApp:
             on_backup=self._do_backup,
             on_about=self._show_about_dialog,
             version=APP_VERSION,
+            sidebar_extended=self.config.ui.sidebar_extended,
         )
         self.header.set_theme_icon(self.page.theme_mode == ft.ThemeMode.DARK)
 
@@ -567,15 +590,23 @@ class SphereApp:
             width=300,
         )
 
+        ai_agent_name_field = ft.TextField(
+            label="Имя ИИ-агента (необязательно, можно из имени загруженного файла)",
+            value=self.config.ai.ai_agent_name or "",
+            hint_text="Например: Моя модель",
+            on_change=lambda e: self._update_setting("ai.ai_agent_name", e.control.value or None),
+            width=300,
+        )
+
         ollama_host = ft.TextField(
-            label="Ollama хост",
+            label="Хост Ollama",
             value=self.config.ai.ollama_host,
             on_change=lambda e: self._update_setting("ai.ollama_host", e.control.value),
             width=300,
         )
 
         ollama_model = ft.TextField(
-            label="Модель Ollama",
+            label="Модель (Ollama или локальный файл)",
             value=self.config.ai.ollama_model,
             on_change=lambda e: self._update_setting("ai.ollama_model", e.control.value),
             width=300,
@@ -590,20 +621,26 @@ class SphereApp:
             width=300,
         )
 
-        # Температура: шаг 0.05 для более тонкой настройки
+        # Интенсивность: шкала 0 — 0.1 — … — 1
+        intensity_scale = ft.Text(
+            "0    0.1   0.2   0.3   0.4   0.5   0.6   0.7   0.8   0.9   1",
+            size=10,
+            color=ft.Colors.ON_SURFACE,
+        )
         temperature = ft.Slider(
             min=0,
             max=1,
-            divisions=20,  # 0.0, 0.05, ... 1.0
+            divisions=20,
             value=self.config.ai.temperature,
             label="{value}",
             on_change=lambda e: self._update_setting("ai.temperature", e.control.value),
-            width=300,
+            width=240,
         )
 
         # Telegram настройки
         tg_enabled = ft.Switch(
             label="Telegram уведомления",
+            label_text_style=ft.TextStyle(color=ft.Colors.ON_SURFACE),
             value=self.config.telegram.enabled,
             on_change=lambda e: self._update_setting("telegram.enabled", e.control.value),
         )
@@ -654,19 +691,19 @@ class SphereApp:
             on_click=self._save_settings,
         )
 
-        backup_btn = ft.ElevatedButton(
+        backup_btn = ft.FilledButton(
             content=ft.Text("Создать бэкап"),
             icon=ft.Icons.BACKUP,
             on_click=self._do_backup,
         )
 
-        export_btn = ft.ElevatedButton(
+        export_btn = ft.FilledButton(
             content=ft.Text("Экспорт данных (JSON)"),
             icon=ft.Icons.DOWNLOAD,
             on_click=self._do_export,
         )
 
-        check_ai_btn = ft.ElevatedButton(
+        check_ai_btn = ft.FilledButton(
             content=ft.Text("Проверить подключение AI"),
             icon=ft.Icons.NETWORK_CHECK,
             on_click=self._check_ai_connection,
@@ -688,45 +725,53 @@ class SphereApp:
                 ft.Container(
                     content=ft.Column(
                         [
-                            ft.Text("Искусственный интеллект", size=16, weight=ft.FontWeight.W_600),
+                            ft.Text("Искусственный интеллект", size=16, weight=ft.FontWeight.W_600, color=ft.Colors.ON_SURFACE),
                             provider_dropdown,
+                            ai_agent_name_field,
                             ollama_host,
                             ollama_model,
                             deepseek_key,
-                            ft.Text("Температура", size=13),
-                            ft.Row(
-                                [
-                                    ft.Text("0 — более точные ответы", size=11, color=ft.Colors.with_opacity(0.7, ft.Colors.ON_SURFACE)),
-                                    ft.Container(expand=True),
-                                    ft.Text("1 — более креативные", size=11, color=ft.Colors.with_opacity(0.7, ft.Colors.ON_SURFACE)),
-                                ],
-                                spacing=4,
-                            ),
+                            ft.Text("Интенсивность", size=13, color=ft.Colors.ON_SURFACE),
+                            intensity_scale,
                             temperature,
                             ft.Divider(height=16),
-                            ft.Text("Загрузка локальной модели по ссылке", size=16, weight=ft.FontWeight.W_600),
+                            ft.Text("Загрузка локальной модели по ссылке", size=16, weight=ft.FontWeight.W_600, color=ft.Colors.ON_SURFACE),
                             ft.Row([self.model_url_field, models_link, download_btn], spacing=8),
                             self.model_progress,
                             check_ai_btn,
 
                             ft.Divider(height=24),
-                            ft.Text("Telegram", size=16, weight=ft.FontWeight.W_600),
+                            ft.Text("Совместимость с ИИ", size=16, weight=ft.FontWeight.W_600, color=ft.Colors.ON_SURFACE),
+                            ft.Text(
+                                "Проверка железа и подбор моделей под ваше устройство.",
+                                size=12,
+                                color=ft.Colors.ON_SURFACE_VARIANT,
+                            ),
+                            ft.FilledButton(
+                                content=ft.Text("Проверить устройство"),
+                                icon=ft.Icons.PHONE_ANDROID,
+                                on_click=self._run_compatibility_test,
+                            ),
+
+                            ft.Divider(height=24),
+                            ft.Text("Telegram", size=16, weight=ft.FontWeight.W_600, color=ft.Colors.ON_SURFACE),
                             tg_enabled,
                             tg_token,
                             tg_chat_id,
 
                             ft.Divider(height=24),
-                            ft.Text("Данные", size=16, weight=ft.FontWeight.W_600),
+                            ft.Text("Данные", size=16, weight=ft.FontWeight.W_600, color=ft.Colors.ON_SURFACE),
                             ft.Row([backup_btn, export_btn], spacing=8),
 
                             ft.Divider(height=24),
-                            ft.Text("Обновления", size=16, weight=ft.FontWeight.W_600),
+                            ft.Text("Обновления", size=16, weight=ft.FontWeight.W_600, color=ft.Colors.ON_SURFACE),
                             ft.Switch(
                                 label="Проверять обновления при запуске",
+                                label_text_style=ft.TextStyle(color=ft.Colors.ON_SURFACE),
                                 value=self.config.auto_update_on_start,
                                 on_change=lambda e: self._update_setting("auto_update_on_start", e.control.value),
                             ),
-                            ft.ElevatedButton(
+                            ft.FilledButton(
                                 content=ft.Text("Проверить обновления"),
                                 icon=ft.Icons.UPDATE,
                                 on_click=self._check_updates,
@@ -798,6 +843,49 @@ class SphereApp:
         self.page.show_dialog(
             ft.SnackBar(content=ft.Text(f"Данные экспортированы: {path}"), duration=3000)
         )
+
+    def _on_sidebar_toggle_compact(self):
+        """Переключить компактный сайдбар (кнопка в хедере или на сайдбаре)."""
+        self.config.ui.sidebar_extended = not self.config.ui.sidebar_extended
+        self.config.save()
+        if self.sidebar and hasattr(self.sidebar, "set_compact"):
+            self.sidebar.set_compact(not self.config.ui.sidebar_extended)
+        if self.header and hasattr(self.header, "set_sidebar_extended"):
+            self.header.set_sidebar_extended(self.config.ui.sidebar_extended)
+        if self.page:
+            self.page.update()
+
+    def _run_compatibility_test(self, e):
+        """Проверить устройство и показать рекомендации моделей."""
+        from utils.resource_monitor import get_system_info, get_recommended_models
+        info = get_system_info()
+        if "error" in info:
+            self.page.show_dialog(
+                ft.SnackBar(content=ft.Text(f"Ошибка: {info['error']}"), duration=4000)
+            )
+            return
+        recommended = get_recommended_models(info)
+        lines = [
+            f"Ядер CPU: {info.get('cpu_count', '—')}",
+            f"RAM: {info.get('ram_total_gb', '—')} GB (свободно {info.get('ram_available_gb', '—')} GB)",
+            f"Свободно на диске: {info.get('disk_free_gb', '—')} GB",
+            "",
+            "Рекомендуемые модели Ollama:",
+        ] + recommended
+        content = ft.Column(
+            [
+                ft.Text("\n".join(lines), size=13, selectable=True),
+            ],
+            scroll=ft.ScrollMode.AUTO,
+        )
+        dlg = ft.AlertDialog(
+            title=ft.Text("Совместимость с ИИ"),
+            content=content,
+            actions=[
+                ft.TextButton("Закрыть", on_click=lambda e: self.page.pop_dialog()),
+            ],
+        )
+        self.page.show_dialog(dlg)
 
     def _check_updates(self, e=None):
         """Проверить обновления (по кнопке)."""
@@ -971,14 +1059,13 @@ class SphereApp:
 
             # Сохраняем путь к модели в конфиг
             self._update_setting("ai.local_model_path", str(dest_path))
+            name_from_file = dest_path.stem
+            had_agent_name = bool((self.config.ai.ai_agent_name or "").strip())
+            if not had_agent_name:
+                self._update_setting("ai.ai_agent_name", name_from_file)
             self.config.save()
-
-            self.page.show_dialog(
-                ft.SnackBar(
-                    content=ft.Text(f"Файл загружен: {dest_path}"),
-                    duration=4000,
-                )
-            )
+            msg = f"Файл загружен: {dest_path}. Имя агента задано из файла: {name_from_file}" if not had_agent_name else f"Файл загружен: {dest_path}"
+            self.page.show_dialog(ft.SnackBar(content=ft.Text(msg), duration=4000))
         except Exception as ex:
             logger.error(f"Ошибка загрузки: {ex}")
             self.page.show_dialog(
