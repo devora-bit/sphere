@@ -143,6 +143,9 @@ class SphereApp:
         # Периодическое обновление мониторинга ресурсов в хедере
         self.page.run_task(self._resource_monitor_loop)
 
+        # Если провайдер Ollama — проверить, что выбранная модель есть; иначе переключить на первую доступную
+        self.page.run_task(self._ensure_ollama_model_async)
+
         logger.info("UI построен, приложение запущено")
 
     async def _resource_monitor_loop(self):
@@ -158,6 +161,41 @@ class SphereApp:
                     self.header.update()
             except Exception:
                 pass
+
+    async def _ensure_ollama_model_async(self):
+        """Если провайдер Ollama и выбранной модели нет — переключить на первую доступную модель."""
+        if (self.config.ai.provider or "") != "ollama":
+            return
+        try:
+            import ollama
+            host = (self.config.ai.ollama_host or "http://localhost:11434").strip()
+            client = ollama.AsyncClient(host=host)
+            r = await client.list()
+            models = getattr(r, "models", None) or []
+            names = []
+            for m in models:
+                n = getattr(m, "name", None) or getattr(m, "model", None) or (m.get("name") if isinstance(m, dict) else None) or (m.get("model") if isinstance(m, dict) else None)
+                if n:
+                    names.append(n if isinstance(n, str) else str(n))
+            current = (self.config.ai.ollama_model or "").strip()
+            if not names:
+                return
+            # Проверяем: есть ли текущая модель в списке (с учётом тега :latest и т.д.)
+            def model_matches(name: str) -> bool:
+                if not current:
+                    return False
+                if name == current:
+                    return True
+                if name.startswith(current + ":") or current.startswith(name + ":"):
+                    return True
+                return False
+            if any(model_matches(n) for n in names):
+                return
+            self.config.ai.ollama_model = names[0]
+            self.config.save()
+            logger.info(f"Модель «{current}» не найдена в Ollama. Автоматически выбрана: {names[0]}")
+        except Exception as e:
+            logger.debug(f"Проверка моделей Ollama при старте: {e}")
 
     def _build_ui(self):
         """Построить основной интерфейс."""
@@ -661,20 +699,42 @@ class SphereApp:
             width=300,
         )
 
-        # Загрузка локальной модели по ссылке
+        # Установка модели через Ollama по имени (ollama pull)
+        self.ollama_model_name_field = ft.TextField(
+            label="Имя модели для Ollama",
+            hint_text="Например: llama3.2, mistral, qwen2:7b (как в команде ollama run ...)",
+            value="",
+            width=400,
+        )
+        pull_ollama_btn = ft.FilledButton(
+            content=ft.Text("Установить модель (ollama pull)"),
+            icon=ft.Icons.DOWNLOAD,
+            on_click=self._pull_ollama_model,
+        )
+        models_catalog_link = ft.TextButton(
+            content=ft.Text("Каталог имён моделей Ollama"),
+            icon=ft.Icons.OPEN_IN_NEW,
+            on_click=self._open_ollama_catalog,
+        )
+        self.pull_progress = ft.ProgressBar(width=300, value=0, visible=False)
+        self.pull_status_text = ft.Text("", size=12, color=ft.Colors.ON_SURFACE_VARIANT)
+        self.pull_spinner = ft.ProgressRing(visible=False, width=24, height=24, stroke_width=2)
+        self.pull_hint_text = ft.Text(
+            "Идёт загрузка — может занять несколько минут. Не закрывайте окно.",
+            size=11,
+            color=ft.Colors.ON_SURFACE_VARIANT,
+            visible=False,
+        )
+
+        # Загрузка локальной модели по прямой ссылке на файл
         self.model_url_field = ft.TextField(
-            label="Ссылка на файл (любой формат: .zip, .gguf, .bin и т.д.)",
+            label="Или ссылка на файл (.zip, .gguf, .bin и т.д.)",
             value=self.config.ai.local_model_url or "",
             width=400,
             on_change=lambda e: self._update_setting("ai.local_model_url", e.control.value),
         )
-        models_link = ft.TextButton(
-            content=ft.Text("Каталог моделей Ollama"),
-            icon=ft.Icons.OPEN_IN_NEW,
-            on_click=self._open_ollama_catalog,
-        )
         download_btn = ft.FilledButton(
-            content=ft.Text("Загрузить модель"),
+            content=ft.Text("Загрузить файл по ссылке"),
             icon=ft.Icons.CLOUD_DOWNLOAD,
             on_click=self._download_model,
         )
@@ -735,8 +795,22 @@ class SphereApp:
                             intensity_scale,
                             temperature,
                             ft.Divider(height=16),
-                            ft.Text("Загрузка локальной модели по ссылке", size=16, weight=ft.FontWeight.W_600, color=ft.Colors.ON_SURFACE),
-                            ft.Row([self.model_url_field, models_link, download_btn], spacing=8),
+                            ft.Text("Модели Ollama", size=16, weight=ft.FontWeight.W_600, color=ft.Colors.ON_SURFACE),
+                            ft.Text(
+                                "На сайте Ollama нет прямой ссылки — укажите имя модели (как в команде ollama run llama3.2) и нажмите «Установить».",
+                                size=12,
+                                color=ft.Colors.ON_SURFACE_VARIANT,
+                            ),
+                            ft.Row([self.ollama_model_name_field, pull_ollama_btn], spacing=8),
+                            ft.Row([models_catalog_link], spacing=8),
+                            ft.Row(
+                                [self.pull_spinner, ft.Column([self.pull_status_text, self.pull_hint_text], spacing=2, expand=True)],
+                                spacing=8,
+                            ),
+                            self.pull_progress,
+                            ft.Divider(height=8),
+                            ft.Text("Или загрузка по прямой ссылке на файл", size=14, weight=ft.FontWeight.W_500, color=ft.Colors.ON_SURFACE),
+                            ft.Row([self.model_url_field, download_btn], spacing=8),
                             self.model_progress,
                             check_ai_btn,
 
@@ -983,15 +1057,15 @@ class SphereApp:
         )
 
     def _open_ollama_catalog(self, e=None):
-        """Открыть каталог моделей Ollama в браузере и скопировать ссылку."""
+        """Открыть каталог моделей Ollama в браузере (там указаны имена для ollama run)."""
         url = "https://ollama.com/library"
         try:
             webbrowser.open(url)
             self.page.set_clipboard_text(url)
             self.page.show_dialog(
                 ft.SnackBar(
-                    content=ft.Text("Ссылка открыта в браузере и скопирована в буфер."),
-                    duration=2000,
+                    content=ft.Text("Каталог открыт в браузере. Используйте имя модели из команды run в поле выше."),
+                    duration=3000,
                 )
             )
         except Exception as ex:
@@ -1011,6 +1085,77 @@ class SphereApp:
                         duration=5000,
                     )
                 )
+
+    def _pull_ollama_model(self, e):
+        """Запустить установку модели через ollama pull по имени."""
+        name = (self.ollama_model_name_field.value or "").strip()
+        if not name:
+            self.page.show_dialog(
+                ft.SnackBar(content=ft.Text("Укажите имя модели (например: llama3.2, mistral)."), duration=3000)
+            )
+            return
+        self.page.run_task(self._pull_ollama_model_async, name)
+
+    async def _pull_ollama_model_async(self, model_name: str):
+        """Установить модель через Ollama API (pull). После успеха — выставить её как текущую."""
+        try:
+            import ollama
+
+            host = (self.config.ai.ollama_host or "http://localhost:11434").strip()
+            client = ollama.AsyncClient(host=host)
+
+            self.pull_progress.visible = True
+            self.pull_progress.value = 0
+            self.pull_spinner.visible = True
+            self.pull_hint_text.visible = True
+            self.pull_status_text.value = "Подключение к Ollama..."
+            self.page.update()
+
+            total_size = None
+            completed_size = 0
+            stream = await client.pull(model_name, stream=True)
+            async for progress in stream:
+                if hasattr(progress, "total") and progress.total is not None and progress.total > 0:
+                    total_size = progress.total
+                if hasattr(progress, "completed") and progress.completed is not None:
+                    completed_size = progress.completed
+                if total_size and total_size > 0 and completed_size is not None:
+                    pct = min(1.0, (completed_size or 0) / total_size)
+                    self.pull_progress.value = pct
+                    status_base = getattr(progress, "status", None) or ""
+                    self.pull_status_text.value = f"Идёт загрузка: {status_base} ({int(pct * 100)}%)"
+                elif getattr(progress, "status", None):
+                    self.pull_status_text.value = f"Идёт загрузка: {progress.status}"
+                self.page.update()
+
+            self.pull_progress.value = 1.0
+            self.pull_status_text.value = "Готово."
+            self._update_setting("ai.ollama_model", model_name)
+            had_agent_name = bool((self.config.ai.ai_agent_name or "").strip())
+            if not had_agent_name:
+                display_name = model_name.replace(":", " ").replace("-", " ").title()
+                self._update_setting("ai.ai_agent_name", display_name)
+            self.config.save()
+            self.page.show_dialog(
+                ft.SnackBar(
+                    content=ft.Text(f"Модель «{model_name}» установлена и выбрана для чата."),
+                    duration=4000,
+                )
+            )
+        except Exception as ex:
+            logger.error(f"Ошибка ollama pull: {ex}")
+            self.page.show_dialog(
+                ft.SnackBar(
+                    content=ft.Text(f"Ошибка: {ex}. Убедитесь, что Ollama запущена (ollama serve)."),
+                    duration=5000,
+                )
+            )
+        finally:
+            self.pull_progress.visible = False
+            self.pull_spinner.visible = False
+            self.pull_hint_text.visible = False
+            self.pull_status_text.value = ""
+            self.page.update()
 
     def _download_model(self, e):
         """Запустить загрузку файла модели по ссылке."""

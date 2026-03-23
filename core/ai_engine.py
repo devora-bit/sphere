@@ -28,18 +28,25 @@ class AIProvider(ABC):
 
 
 class OllamaProvider(AIProvider):
-    """Провайдер через Ollama (локальные модели)."""
+    """Провайдер через Ollama (локальные модели). Модель берётся из config при каждом запросе."""
 
-    def __init__(self, host: str = "http://localhost:11434", model: str = "llama2"):
+    def __init__(self, host: str = "http://localhost:11434", model: str = "llama2", config: AppConfig = None):
         self.host = host
         self.model = model
+        self.config = config
+
+    def _current_model(self, **kwargs) -> str:
+        if self.config and getattr(self.config.ai, "ollama_model", None):
+            return kwargs.get("model") or self.config.ai.ollama_model
+        return kwargs.get("model") or self.model
 
     async def chat(self, messages: List[Dict], **kwargs) -> str:
         try:
             import ollama
             client = ollama.AsyncClient(host=self.host)
+            model = self._current_model(**kwargs)
             response = await client.chat(
-                model=kwargs.get("model", self.model),
+                model=model,
                 messages=messages,
             )
             return response["message"]["content"]
@@ -54,8 +61,9 @@ class OllamaProvider(AIProvider):
         try:
             import ollama
             client = ollama.AsyncClient(host=self.host)
+            model = self._current_model(**kwargs)
             stream = await client.chat(
-                model=kwargs.get("model", self.model),
+                model=model,
                 messages=messages,
                 stream=True,
             )
@@ -138,7 +146,9 @@ class AIEngine:
         "Тебе передаются релевантные заметки, задачи и фрагменты документов — подбираются по запросу. "
         "Отвечай точно на основе этих данных: цитируй, ссылайся на конкретные записи, делай выводы. "
         "С пользователем можно говорить о чём угодно — о его заметках, планах, документах; твои ответы опираются на его же данные. "
-        "Отвечай кратко и по делу. Используй Markdown для форматирования."
+        "Отвечай кратко и по делу. Используй Markdown для форматирования. "
+        "Всегда отвечай на грамотном современном русском языке, без смешения с другими языками и сленга. "
+        "Не используй эмодзи, если пользователь сам не начал их использовать."
     )
 
     def __init__(self, config: AppConfig = None):
@@ -152,6 +162,7 @@ class AIEngine:
         self.providers["ollama"] = OllamaProvider(
             host=self.config.ai.ollama_host,
             model=self.config.ai.ollama_model,
+            config=self.config,
         )
         if self.config.ai.deepseek_api_key:
             self.providers["deepseek"] = DeepSeekProvider(
